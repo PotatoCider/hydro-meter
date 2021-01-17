@@ -8,9 +8,11 @@ app.get('/', (req, res) => {
     res.send('Hello World!')
 })
 
-app.post('/flow_rate', (req, res) => {
-    console.log('received POST /flow_rate')
-    console.log('flow_rate:', req.body)
+// app.post()
+
+app.post('/flow_volume', (req, res) => {
+    console.log('received POST /flow_volume')
+    console.log('body:', req.body)
     res.status(200)
     res.end()
 })

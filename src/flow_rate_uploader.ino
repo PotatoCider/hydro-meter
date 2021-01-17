@@ -12,7 +12,7 @@ extern "C" {
 }
 
 // #define UPDATE_FREQ 5000  // ms
-#define SERVER_URL "http://aipl.duckdns.org:3000/flow_rate"
+#define SERVER_URL "http://aipl.duckdns.org:3000/flow_volume"
 #define FLOW_TIMEOUT 5        // how many seconds of flow rate inactivity to send data and sleep.
 #define FLOW_RATE_RATIO 11.0  // f = 11 * Q where Q: litres/min, f: Hz
 #define SENSOR_PIN D5
@@ -44,18 +44,24 @@ int inactiveSecs = 0;
 
 void loop() {
     int sensorFreq = calculateFrequency(SENSOR_PIN);
-    flowVolume += sensorFreq / FLOW_RATE_RATIO / 60.0;  // flow rate is in L/min
+    flowVolume += sensorFreq;  // flow volume is currently scaled by FLOW_RATE_RATIO * 60.0
 
     if (sensorFreq)
         inactiveSecs = 0;
     else
         inactiveSecs++;
 
+    Serial.printf("flowVolume: %f\n", flowVolume / FLOW_RATE_RATIO / 60.0);
+
     if (inactiveSecs == FLOW_TIMEOUT) {
         inactiveSecs = 0;
 
-        int code = postFlowRate(flowVolume);
+        saveConfig();  // save flowVolume
+        int code = postFlowVolume(flowVolume / FLOW_RATE_RATIO / 60.0);
         Serial.printf("POST HTTP Code %i\n", code);
+
+        if (code == 200) flowVolume = 0;
+        saveConfig();  // save config again if flowVolume is uploaded
         light_sleep();
     }
 }
@@ -68,9 +74,8 @@ int calculateFrequency(uint8_t pin) {
         bool r = digitalRead(pin);
         fedges += prev && !r;
         prev = r;
-        delay(1);  // theoretical max freq 1000 hz
+        delay(1);  // sampling rate: 1000 hz
     }
-    Serial.printf("freq: %i\n", fedges);
     return fedges;
 }
 
@@ -80,14 +85,15 @@ void light_sleep() {
     wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
     wifi_fpm_open();
     wifi_fpm_set_wakeup_cb([]() {
-        Serial.println("wakeup");
+        Serial.printf("wakeup %lu\n", millis());
         // Serial.flush();
     });
+    // wakeup on any edge
     GPIO_INT_TYPE intr = digitalRead(SENSOR_PIN) ? GPIO_PIN_INTR_LOLEVEL : GPIO_PIN_INTR_HILEVEL;
     gpio_pin_wakeup_enable(GPIO_ID_PIN(SENSOR_PIN), intr);
     Serial.println("Sleeping...");
-    delay(10);  // fix watchdog reset
-    wifi_fpm_do_sleep(0xFFFFFFF);
+    delay(10);                     // fix watchdog reset
+    wifi_fpm_do_sleep(0xFFFFFFF);  // sleep forever until interrupt
     delay(10);
 }
 
@@ -106,6 +112,7 @@ void saveConfig() {
     Serial.printf("writing: user_id=%u\n", uid);
     File file = LittleFS.open("/config", "w");
     file.printf("user_id=%u\n", uid);
+    file.printf("flow_volume=%.6f\n", flowVolume);
     file.close();
 }
 
@@ -121,25 +128,27 @@ void loadConfig() {
         String line = file.readStringUntil('\n');
         if (line.startsWith("user_id=")) {
             user_id.setValue(line.substring(8).c_str());
+        } else if (line.startsWith("flow_volume=")) {
+            flowVolume = line.substring(12).toDouble();
         }
         Serial.println(line);
     }
     file.close();
 }
 
-int postFlowRate(double flowVolume) {
+int postFlowVolume(double flowVolume) {
     // reconnect WiFi if disconnected
     if (WiFi.status() != WL_CONNECTED && !wc.autoConnect())
-        wc.startConfigurationPortal(AP_WAIT);
+        wc.startConfigurationPortal(AP_NONE);
     http.begin(client, SERVER_URL);
     http.addHeader("Content-Type", "application/json");
 
-    String body = "{\"interval\":1000,\"chip_id\":";
+    String body = "{\"chip_id\":";
     body += system_get_chip_id();
     body += ",\"user_id\":\"";
     body += user_id.getValue();
     body += "\",\"flow_volume\":";
-    body += flowVolume;
+    body += String(flowVolume, 5);
     body += "}";
 
     return http.POST(body);
@@ -158,7 +167,7 @@ void beginWiFi() {
 
     wc.addParameter(&user_id);
 
-    wc.startConfigurationPortal(AP_RESET);  // if not connected,
+    // wc.startConfigurationPortal(AP_RESET);  // if not connected,
 
     if (!wc.autoConnect()) {  // try to connect to wifi
         /* We could also use button etc. to trigger the portal on demand within main loop */
