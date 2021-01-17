@@ -10,7 +10,7 @@ app.get('/', (req, res) => {
 
 app.post('/flow_rate', (req, res) => {
     console.log('received POST /flow_rate')
-    console.log('flow_rate:', req.body.flow_rate)
+    console.log('flow_rate:', req.body)
     res.status(200)
     res.end()
 })
