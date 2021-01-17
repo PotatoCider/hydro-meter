@@ -13,14 +13,15 @@ extern "C" {
 
 // #define UPDATE_FREQ 5000  // ms
 #define SERVER_URL "http://aipl.duckdns.org:3000/flow_volume"
-#define FLOW_TIMEOUT 5        // how many seconds of flow rate inactivity to send data and sleep.
-#define FLOW_RATE_RATIO 11.0  // f = 11 * Q where Q: litres/min, f: Hz
+#define FLOW_TIMEOUT 60       // how many seconds of flow rate inactivity to send data and sleep.
+#define FLOW_RATE_RATIO 10.0  // f = 10 * Q where Q: litres/min, f: Hz
 #define SENSOR_PIN D5
 
 WiFiClient client;
 HTTPClient http;
 WiFiConnect wc;
 WiFiConnectParam user_id("user_id", "User ID", "", 6, "required type=\"number\" min=\"0\" max=\"65535\"");
+WiFiConnectParam chip_id_display("chip_id", "Chip ID", "", 25, "readonly");
 
 void beginWiFi();
 void light_sleep();
@@ -32,6 +33,12 @@ void setup() {
     pinMode(SENSOR_PIN, INPUT);
 
     Serial.println("\n");
+
+    // display chip_id
+    String cidDisplay = "Your Chip ID: ";
+    cidDisplay += system_get_chip_id();
+    chip_id_display.setValue(cidDisplay.c_str());
+
     // reset();
     // saveConfig();
     loadConfig();
@@ -44,7 +51,7 @@ int inactiveSecs = 0;
 
 void loop() {
     int sensorFreq = calculateFrequency(SENSOR_PIN);
-    flowVolume += sensorFreq;  // flow volume is currently scaled by FLOW_RATE_RATIO * 60.0
+    flowVolume += sensorFreq;  // flow volume is currently scaled by FLOW_RATE_RATIO * 600.0
 
     if (sensorFreq)
         inactiveSecs = 0;
@@ -166,8 +173,9 @@ void beginWiFi() {
     });
 
     wc.addParameter(&user_id);
+    wc.addParameter(&chip_id_display);
 
-    // wc.startConfigurationPortal(AP_RESET);  // if not connected,
+    wc.startConfigurationPortal(AP_RESET);  // for testing the wifi/config portal
 
     if (!wc.autoConnect()) {  // try to connect to wifi
         /* We could also use button etc. to trigger the portal on demand within main loop */
