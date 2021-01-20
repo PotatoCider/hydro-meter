@@ -1,16 +1,20 @@
 const express = require('express')
+const cors = require('cors')
 const Redis = require("ioredis")
 const redis = new Redis({ keyPrefix: 'hydro-rpg:' })
 const app = express()
 const port = 3000
 
 app.use(express.json())
+app.use(cors())
 
 // app.get('/', (req, res) => {
 //     res.send('Hello World!')
 // })
 
 app.get('/flow_volume', async (req, res) => {
+    console.log('received GET /flow_volume')
+    console.log('query:', req.query)
     const { chip_id, user_id } = req.query
     if (chip_id < 0 || chip_id >= 2 ** 32) {
         res.send('Invalid request: chip_id is out of bounds')
