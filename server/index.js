@@ -31,6 +31,7 @@ app.get('/flow_volume', async (req, res) => {
     const weeklyKey = `${chip_id}:${+user_id}:weekly_flow_volume`
     const monthlyKey = `${chip_id}:${+user_id}:monthly_flow_volume`
     const yearlyKey = `${chip_id}:${+user_id}:yearly_flow_volume`
+    const lastKey = `${chip_id}:${+user_id}:last_flow_volume`
 
     res.send({
         chip_id, user_id,
@@ -39,6 +40,7 @@ app.get('/flow_volume', async (req, res) => {
         weekly_flow_volume: +(await redis.get(weeklyKey)),
         monthly_flow_volume: +(await redis.get(monthlyKey)),
         yearly_flow_volume: +(await redis.get(yearlyKey)),
+        last_flow_volume: +(await redis.get(lastKey)),
     })
 })
 
@@ -46,11 +48,13 @@ app.post('/flow_volume', async (req, res) => {
     console.log('received POST /flow_volume')
     console.log('body:', req.body)
     const { chip_id, user_id, flow_volume } = req.body
+    if (isNaN(flow_volume)) return res.status(400).send('Invalid flow_volume')
     const totalKey = `${chip_id}:${+user_id}:total_flow_volume`
     const dailyKey = `${chip_id}:${+user_id}:daily_flow_volume`
     const weeklyKey = `${chip_id}:${+user_id}:weekly_flow_volume`
     const monthlyKey = `${chip_id}:${+user_id}:monthly_flow_volume`
     const yearlyKey = `${chip_id}:${+user_id}:yearly_flow_volume`
+    const lastKey = `${chip_id}:${user_id}:last_flow_volume`
     const now = new Date()
     const expireDay = new Date()
     const expireWeek = new Date()
@@ -71,6 +75,7 @@ app.post('/flow_volume', async (req, res) => {
     redis.incrbyfloat(weeklyKey, flow_volume)
     redis.incrbyfloat(monthlyKey, flow_volume)
     redis.incrbyfloat(yearlyKey, flow_volume)
+    redis.set(lastKey, flow_volume)
 
     redis.expireat(dailyKey, Math.floor(expireDay.getTime() / 1000))
     redis.expireat(weeklyKey, Math.floor(expireWeek.getTime() / 1000))
