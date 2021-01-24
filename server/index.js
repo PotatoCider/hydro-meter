@@ -12,6 +12,23 @@ app.use(cors())
 //     res.send('Hello World!')
 // })
 
+app.post('/signup', async (req, res) => {
+    console.log('received POST /signup')
+    console.log('body:', req.body)
+    let { chip_id, user_id } = req.body
+    if (chip_id < 0 || chip_id >= 2 ** 32)
+        res.status(400).send('Invalid request: chip_id is out of bounds')
+    let key = `${chip_id}:${user_id}`
+    if (user_id == null) {
+        do {
+            user_id = Math.floor(Math.random() * 2 ** 16)
+            key = `${chip_id}:${user_id}`
+        } while (await redis.exists(key))
+    }
+    redis.hset(key, 'total_flow_volume', 0, 'last_flow_volume', 0, 'joined', Date.now())
+    
+})
+
 app.get('/flow_volume', async (req, res) => {
     console.log('received GET /flow_volume')
     console.log('query:', req.query)
@@ -26,21 +43,21 @@ app.get('/flow_volume', async (req, res) => {
         res.status(400)
         return res.end()
     }
-    const totalKey = `${chip_id}:${+user_id}:total_flow_volume`
+    const key = `${chip_id}:${+user_id}`
     const dailyKey = `${chip_id}:${+user_id}:daily_flow_volume`
     const weeklyKey = `${chip_id}:${+user_id}:weekly_flow_volume`
     const monthlyKey = `${chip_id}:${+user_id}:monthly_flow_volume`
     const yearlyKey = `${chip_id}:${+user_id}:yearly_flow_volume`
-    const lastKey = `${chip_id}:${+user_id}:last_flow_volume`
+    // const lastKey = `${chip_id}:${+user_id}:last_flow_volume`
 
     res.send({
         chip_id, user_id,
-        total_flow_volume: +(await redis.get(totalKey)), // +null === 0
+        total_flow_volume: +(await redis.hget(key, 'total_flow_volume')), // +null === 0
         daily_flow_volume: +(await redis.get(dailyKey)),
         weekly_flow_volume: +(await redis.get(weeklyKey)),
         monthly_flow_volume: +(await redis.get(monthlyKey)),
         yearly_flow_volume: +(await redis.get(yearlyKey)),
-        last_flow_volume: +(await redis.get(lastKey)),
+        last_flow_volume: +(await redis.hget(key, 'last_flow_volume')),
     })
 })
 
@@ -49,12 +66,13 @@ app.post('/flow_volume', async (req, res) => {
     console.log('body:', req.body)
     const { chip_id, user_id, flow_volume } = req.body
     if (isNaN(flow_volume)) return res.status(400).send('Invalid flow_volume')
-    const totalKey = `${chip_id}:${+user_id}:total_flow_volume`
+    const key = `${chip_id}:${+user_id}`
+    // const totalKey = `${chip_id}:${+user_id}:total_flow_volume`
     const dailyKey = `${chip_id}:${+user_id}:daily_flow_volume`
     const weeklyKey = `${chip_id}:${+user_id}:weekly_flow_volume`
     const monthlyKey = `${chip_id}:${+user_id}:monthly_flow_volume`
     const yearlyKey = `${chip_id}:${+user_id}:yearly_flow_volume`
-    const lastKey = `${chip_id}:${user_id}:last_flow_volume`
+    // const lastKey = `${chip_id}:${user_id}:last_flow_volume`
     const now = new Date()
     const expireDay = new Date()
     const expireWeek = new Date()
@@ -70,20 +88,19 @@ app.post('/flow_volume', async (req, res) => {
     expireYear.setFullYear(now.getFullYear() + 1, 0, 1)
     expireYear.setHours(0, 0, 0, 0)
 
-    redis.incrbyfloat(totalKey, flow_volume)
+    redis.hincrbyfloat(key, 'total_flow_volume', flow_volume)
     redis.incrbyfloat(dailyKey, flow_volume)
     redis.incrbyfloat(weeklyKey, flow_volume)
     redis.incrbyfloat(monthlyKey, flow_volume)
     redis.incrbyfloat(yearlyKey, flow_volume)
-    redis.set(lastKey, flow_volume)
+    redis.hset(key, 'last_flow_volume', flow_volume)
 
     redis.expireat(dailyKey, Math.floor(expireDay.getTime() / 1000))
     redis.expireat(weeklyKey, Math.floor(expireWeek.getTime() / 1000))
     redis.expireat(monthlyKey, Math.floor(expireMonth.getTime() / 1000))
     redis.expireat(yearlyKey, Math.floor(expireYear.getTime() / 1000))
 
-    res.status(200)
-    res.end()
+    res.status(200).end()
 })
 
 app.listen(port, () => {
