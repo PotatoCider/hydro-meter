@@ -15,33 +15,49 @@ app.use(cors())
 app.post('/signup', async (req, res) => {
     console.log('received POST /signup')
     console.log('body:', req.body)
-    let { chip_id, user_id } = req.body
-    if (chip_id < 0 || chip_id >= 2 ** 32)
-        res.status(400).send('Invalid request: chip_id is out of bounds')
+    let { chip_id } = req.body
+    if (chip_id <= 0 || chip_id >= 2 ** 32)
+        return res.status(400).send('Invalid request: chip_id is out of bounds')
     let key = `${chip_id}:${user_id}`
-    if (user_id == null) {
-        do {
-            user_id = Math.floor(Math.random() * 2 ** 16)
-            key = `${chip_id}:${user_id}`
-        } while (await redis.exists(key))
-    }
-    redis.hset(key, 'total_flow_volume', 0, 'last_flow_volume', 0, 'joined', Date.now())
-    
+
+    do {
+        user_id = Math.floor(Math.random() * 2 ** 16)
+        key = `${chip_id}:${user_id}`
+    } while (user_id === 0 || await redis.exists(key))
+    const joined_timestamp = Date.now()
+    redis.hset(key,
+        'total_flow_volume', 0,
+        'last_flow_volume', 0,
+        'joined_timestamp', joined_timestamp
+    )
+    redis.hset(`users:${user_id}`, 'chip_id', chip_id)
+    res.status(200).send(JSON.stringify({ chip_id, user_id, joined_timestamp }))
+})
+
+app.get('/users', async (req, res) => {
+    console.log('received GET /users')
+    console.log('query:', req.query)
+    let { user_id } = req.body
+    const chip_id = redis.hget(`users:${user_id}`, 'chip_id')
+    if (!chip_id)
+        return res.status(400).send('Unable to find chip_id. User not signed up?')
+    res.status(200).send(JSON.stringify({
+        user_id, chip_id,
+        joined_timestamp: await redis.hget(`users:${user_id}`, 'chip_id')
+    }))
 })
 
 app.get('/flow_volume', async (req, res) => {
     console.log('received GET /flow_volume')
     console.log('query:', req.query)
     const { chip_id, user_id } = req.query
-    if (chip_id < 0 || chip_id >= 2 ** 32) {
-        res.send('Invalid request: chip_id is out of bounds')
-        res.status(400)
-        return res.end()
+    if (chip_id <= 0 || chip_id >= 2 ** 32) {
+        res.status(400).send('Invalid request: chip_id is out of bounds')
+        return
     }
-    if (user_id < 0 || user_id >= 2 ** 16) {
-        res.send('Invalid request: user_id is out of bounds')
-        res.status(400)
-        return res.end()
+    if (user_id <= 0 || user_id >= 2 ** 16) {
+        res.status(400).send('Invalid request: user_id is out of bounds')
+        return
     }
     const key = `${chip_id}:${+user_id}`
     const dailyKey = `${chip_id}:${+user_id}:daily_flow_volume`
@@ -58,6 +74,8 @@ app.get('/flow_volume', async (req, res) => {
         monthly_flow_volume: +(await redis.get(monthlyKey)),
         yearly_flow_volume: +(await redis.get(yearlyKey)),
         last_flow_volume: +(await redis.hget(key, 'last_flow_volume')),
+        last_timestamp: +(await redis.hget(key, 'last_timestamp')),
+        joined_timestamp: +(await redis.hget(key, 'joined_timestamp'))
     })
 })
 
@@ -94,13 +112,14 @@ app.post('/flow_volume', async (req, res) => {
     redis.incrbyfloat(monthlyKey, flow_volume)
     redis.incrbyfloat(yearlyKey, flow_volume)
     redis.hset(key, 'last_flow_volume', flow_volume)
+    redis.hset(key, 'last_timestamp', Math.floor(now.getTime() / 1000))
 
     redis.expireat(dailyKey, Math.floor(expireDay.getTime() / 1000))
     redis.expireat(weeklyKey, Math.floor(expireWeek.getTime() / 1000))
     redis.expireat(monthlyKey, Math.floor(expireMonth.getTime() / 1000))
     redis.expireat(yearlyKey, Math.floor(expireYear.getTime() / 1000))
 
-    res.status(200).end()
+    res.status(200).send('200 OK')
 })
 
 app.listen(port, () => {

@@ -58,14 +58,16 @@ void loop() {
     else
         inactiveSecs++;
 
-    Serial.printf("flowVolume: %f\n", flowVolume / FLOW_RATE_RATIO / 60.0);
+    Serial.print(F("flowVolume: "));
+    Serial.println(flowVolume / FLOW_RATE_RATIO / 60.0);
 
     if (inactiveSecs == FLOW_TIMEOUT) {
         inactiveSecs = 0;
 
         saveConfig();  // save flowVolume
         int code = postFlowVolume(flowVolume / FLOW_RATE_RATIO / 60.0);
-        Serial.printf("POST HTTP Code %i\n", code);
+        Serial.print(F("POST HTTP Code"));
+        Serial.println(code);
 
         if (code == 200) flowVolume = 0;
         saveConfig();  // save config again if flowVolume is uploaded
@@ -92,13 +94,14 @@ void light_sleep() {
     wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
     wifi_fpm_open();
     wifi_fpm_set_wakeup_cb([]() {
-        Serial.printf("wakeup %lu\n", millis());
+        Serial.print(F("wakeup: "));
+        Serial.println(millis());
         // Serial.flush();
     });
-    // wakeup on any edge
+    // wakeup on changed logic level
     GPIO_INT_TYPE intr = digitalRead(SENSOR_PIN) ? GPIO_PIN_INTR_LOLEVEL : GPIO_PIN_INTR_HILEVEL;
     gpio_pin_wakeup_enable(GPIO_ID_PIN(SENSOR_PIN), intr);
-    Serial.println("Sleeping...");
+    Serial.println(F("Sleeping..."));
     delay(10);                     // fix watchdog reset
     wifi_fpm_do_sleep(0xFFFFFFF);  // sleep forever until interrupt
     delay(10);
@@ -166,20 +169,18 @@ void beginWiFi() {
 
     /* Set our callbacks */
     wc.setAPCallback([](WiFiConnect *mWiFiConnect) {
-        Serial.println("Entering Access Point");
+        Serial.println(F("Entering Access Point"));
     });
-    wc.setSaveConfigCallback([]() {
-        saveConfig();
-    });
+    wc.setSaveConfigCallback(saveConfig);
 
     wc.addParameter(&user_id);
     wc.addParameter(&chip_id_display);
 
-    wc.startConfigurationPortal(AP_RESET);  // for testing the wifi/config portal
+    // wc.startConfigurationPortal(AP_RESET);  // for testing the wifi/config portal
 
     if (!wc.autoConnect()) {  // try to connect to wifi
         /* We could also use button etc. to trigger the portal on demand within main loop */
-        wc.startConfigurationPortal(AP_RESET);  // if not connected,
+        wc.startConfigurationPortal(AP_NONE);  // if not connected, continue to measure
     }
 }
 
