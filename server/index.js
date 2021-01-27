@@ -18,19 +18,20 @@ app.post('/signup', async (req, res) => {
     let { chip_id } = req.body
     if (chip_id <= 0 || chip_id >= 2 ** 32)
         return res.status(400).send('Invalid request: chip_id is out of bounds')
-    let key = `${chip_id}:${user_id}`
 
+    let user_id
     do {
-        user_id = Math.floor(Math.random() * 2 ** 16)
-        key = `${chip_id}:${user_id}`
-    } while (user_id === 0 || await redis.exists(key))
+        user_id = Math.floor(Math.random() * 2 ** 32)
+    } while (user_id === 0 || await redis.exists(`users:${user_id}`))
     const joined_timestamp = Date.now()
-    redis.hset(key,
+    redis.hset(`${chip_id}:${user_id}`,
         'total_flow_volume', 0,
         'last_flow_volume', 0,
-        'joined_timestamp', joined_timestamp
     )
-    redis.hset(`users:${user_id}`, 'chip_id', chip_id)
+    redis.hset(`users:${user_id}`,
+        'chip_id', chip_id,
+        'joined_timestamp', joined_timestamp,
+    )
     res.status(200).send(JSON.stringify({ chip_id, user_id, joined_timestamp }))
 })
 
@@ -43,7 +44,7 @@ app.get('/users', async (req, res) => {
         return res.status(400).send('Unable to find chip_id. User not signed up?')
     res.status(200).send(JSON.stringify({
         user_id, chip_id,
-        joined_timestamp: await redis.hget(`users:${user_id}`, 'chip_id')
+        joined_timestamp: await redis.hget(`users:${user_id}`, 'joined_timestamp')
     }))
 })
 
@@ -55,7 +56,7 @@ app.get('/flow_volume', async (req, res) => {
         res.status(400).send('Invalid request: chip_id is out of bounds')
         return
     }
-    if (user_id <= 0 || user_id >= 2 ** 16) {
+    if (user_id <= 0 || user_id >= 2 ** 32) {
         res.status(400).send('Invalid request: user_id is out of bounds')
         return
     }
@@ -75,7 +76,6 @@ app.get('/flow_volume', async (req, res) => {
         yearly_flow_volume: +(await redis.get(yearlyKey)),
         last_flow_volume: +(await redis.hget(key, 'last_flow_volume')),
         last_timestamp: +(await redis.hget(key, 'last_timestamp')),
-        joined_timestamp: +(await redis.hget(key, 'joined_timestamp'))
     })
 })
 
