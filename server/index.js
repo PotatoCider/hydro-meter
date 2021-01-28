@@ -111,8 +111,14 @@ app.post('/flow_volume', async (req, res) => {
     redis.incrbyfloat(weeklyKey, flow_volume)
     redis.incrbyfloat(monthlyKey, flow_volume)
     redis.incrbyfloat(yearlyKey, flow_volume)
-    redis.hset(key, 'last_flow_volume', flow_volume)
-    redis.hset(key, 'last_timestamp', Math.floor(now.getTime() / 1000))
+    const last_unix = await redis.hget(key, 'last_timestamp')
+    const now_unix = Math.floor(now.getTime() / 1000)
+    if (now_unix - last_unix < 300) // 5 min
+        redis.hincrbyfloat(key, 'last_flow_volume', flow_volume)
+    else
+        redis.hset(key, 'last_flow_volume', flow_volume)
+
+    redis.hset(key, 'last_timestamp', now_unix)
 
     redis.expireat(dailyKey, Math.floor(expireDay.getTime() / 1000))
     redis.expireat(weeklyKey, Math.floor(expireWeek.getTime() / 1000))

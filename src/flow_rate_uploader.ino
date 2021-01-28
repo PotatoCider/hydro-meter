@@ -13,20 +13,28 @@ extern "C" {
 
 // #define UPDATE_FREQ 5000  // ms
 #define SERVER_URL "http://aipl.duckdns.org:3000/flow_volume"
-#define FLOW_TIMEOUT 60       // how many seconds of flow rate inactivity to send data and sleep.
+#define FLOW_TIMEOUT 5000     // how many ms of flow rate inactivity to send data and sleep.
 #define FLOW_RATE_RATIO 10.0  // f = 10 * Q where Q: litres/min, f: Hz
 #define SENSOR_PIN D5
 
 WiFiClient client;
-HTTPClient http;
 WiFiConnect wc;
-WiFiConnectParam user_id("user_id", "User ID", "", 6, "required type=\"number\" min=\"0\" max=\"65535\"");
+WiFiConnectParam user_id("user_id", "User ID", "", 11, "required type=\"number\" min=\"1\" max=\"4294967295\"");
 WiFiConnectParam chip_id_display("chip_id", "Chip ID", "", 25, "readonly");
 
 void beginWiFi();
 void light_sleep();
 
-// bool configNeedsSaving = false;
+volatile unsigned long fedges = 0;
+volatile unsigned long lastedge = millis();
+
+void ICACHE_RAM_ATTR flowrate_ISR() {
+    fedges++;
+    lastedge = millis();
+    // Serial.print("millis: ");
+    // Serial.println(lastedge);
+}
+
 void setup() {
     Serial.begin(115200);
     // Serial.setDebugOutput(true);
@@ -38,55 +46,49 @@ void setup() {
     String cidDisplay = "Your Chip ID: ";
     cidDisplay += system_get_chip_id();
     chip_id_display.setValue(cidDisplay.c_str());
+    attachInterrupt(digitalPinToInterrupt(SENSOR_PIN), flowrate_ISR, FALLING);
 
     // reset();
     // saveConfig();
     loadConfig();
-
     beginWiFi();
 }
 
-double flowVolume = 0;  // litres
-int inactiveSecs = 0;
+// double flowVolume = 0;  // litres
+// int inactiveSecs = 0;
 
 void loop() {
-    int sensorFreq = calculateFrequency(SENSOR_PIN);
-    flowVolume += sensorFreq;  // flow volume is currently scaled by FLOW_RATE_RATIO * 600.0
-
-    if (sensorFreq)
-        inactiveSecs = 0;
-    else
-        inactiveSecs++;
-
-    Serial.print(F("flowVolume: "));
-    Serial.println(flowVolume / FLOW_RATE_RATIO / 60.0);
-
-    if (inactiveSecs == FLOW_TIMEOUT) {
-        inactiveSecs = 0;
+    unsigned long recorded_lastedge = lastedge;  // race condition when using lastedge and millis() directly.
+    if (millis() - recorded_lastedge > FLOW_TIMEOUT) {
+        unsigned long recorded_fedges = fedges;
+        double flowVolume = recorded_fedges / FLOW_RATE_RATIO / 60.0;
+        Serial.print(F("flowVolume: "));
+        Serial.println(flowVolume);
 
         saveConfig();  // save flowVolume
-        int code = postFlowVolume(flowVolume / FLOW_RATE_RATIO / 60.0);
-        Serial.print(F("POST HTTP Code"));
+        int code = postFlowVolume(flowVolume);
+        Serial.print(F("POST HTTP Code "));
         Serial.println(code);
 
-        if (code == 200) flowVolume = 0;
+        if (code == 200) fedges -= recorded_fedges;
         saveConfig();  // save config again if flowVolume is uploaded
-        light_sleep();
+        if (fedges == 0) light_sleep();
     }
+    delay(1000);
 }
 
-// calculate no. of falling edges in 1s
-int calculateFrequency(uint8_t pin) {
-    int fedges = 0;
-    unsigned long t1 = millis(), t2 = t1 + 1;
-    for (bool prev = 0; t2 - t1 < 1000; t2 = millis()) {
-        bool r = digitalRead(pin);
-        fedges += prev && !r;
-        prev = r;
-        delay(1);  // sampling rate: 1000 hz
-    }
-    return fedges;
-}
+// // calculate no. of falling edges in 1s
+// int calculateFrequency(uint8_t pin) {
+//     int fedges = 0;
+//     unsigned long t1 = millis(), t2 = t1 + 1;
+//     for (bool prev = 0; t2 - t1 < 1000; t2 = millis()) {
+//         bool r = digitalRead(pin);
+//         fedges += prev && !r;
+//         prev = r;
+//         delay(1);  // sampling rate: 1000 hz
+//     }
+//     return fedges;
+// }
 
 void light_sleep() {
     // wifi_station_disconnect();
@@ -104,7 +106,7 @@ void light_sleep() {
     Serial.println(F("Sleeping..."));
     delay(10);                     // fix watchdog reset
     wifi_fpm_do_sleep(0xFFFFFFF);  // sleep forever until interrupt
-    delay(10);
+    delay(10);                     // required to sleep
 }
 
 void saveConfig() {
@@ -114,15 +116,16 @@ void saveConfig() {
         Serial.println("UNABLE to open LittleFS");
         return;
     }
-    uint16 uid = String(user_id.getValue()).toInt();  // assume checked
-    if (uid <= 0 || uid > INT16_MAX)
+    uint32 uid = String(user_id.getValue()).toInt();  // assume checked
+    if (uid <= 0 || uid > UINT32_MAX)
         Serial.printf("uid out of bounds (%u)\n", uid);
 
-    Serial.println("Writing file...");
-    Serial.printf("writing: user_id=%u\n", uid);
+    Serial.print("Writing file... ");
+    Serial.printf("user_id=%u ", uid);
+    Serial.printf("fedges=%lu\n", fedges);
     File file = LittleFS.open("/config", "w");
     file.printf("user_id=%u\n", uid);
-    file.printf("flow_volume=%.6f\n", flowVolume);
+    file.printf("fedges=%lu\n", fedges);
     file.close();
 }
 
@@ -138,8 +141,8 @@ void loadConfig() {
         String line = file.readStringUntil('\n');
         if (line.startsWith("user_id=")) {
             user_id.setValue(line.substring(8).c_str());
-        } else if (line.startsWith("flow_volume=")) {
-            flowVolume = line.substring(12).toDouble();
+        } else if (line.startsWith("fedges=")) {
+            fedges = line.substring(7).toDouble();
         }
         Serial.println(line);
     }
@@ -147,9 +150,9 @@ void loadConfig() {
 }
 
 int postFlowVolume(double flowVolume) {
+    HTTPClient http;
     // reconnect WiFi if disconnected
-    if (WiFi.status() != WL_CONNECTED && !wc.autoConnect())
-        wc.startConfigurationPortal(AP_NONE);
+    autoConnectWiFi();
     http.begin(client, SERVER_URL);
     http.addHeader("Content-Type", "application/json");
 
@@ -164,9 +167,14 @@ int postFlowVolume(double flowVolume) {
     return http.POST(body);
 }
 
+void autoConnectWiFi() {
+    if (!wc.autoConnect())
+        wc.startConfigurationPortal(AP_NONE);
+}
+
 void beginWiFi() {
     wc.setDebug(true);
-
+    // wc.setConnectionTimeoutSecs(5);
     /* Set our callbacks */
     wc.setAPCallback([](WiFiConnect *mWiFiConnect) {
         Serial.println(F("Entering Access Point"));
@@ -178,10 +186,7 @@ void beginWiFi() {
 
     // wc.startConfigurationPortal(AP_RESET);  // for testing the wifi/config portal
 
-    if (!wc.autoConnect()) {  // try to connect to wifi
-        /* We could also use button etc. to trigger the portal on demand within main loop */
-        wc.startConfigurationPortal(AP_NONE);  // if not connected, continue to measure
-    }
+    autoConnectWiFi();
 }
 
 void reset() {
