@@ -70,8 +70,9 @@ void loop() {
         Serial.print(F("POST HTTP Code "));
         Serial.println(code);
 
+        // time has passed since uploading the recorded flow volume so we subtract
         if (code == 200) fedges -= recorded_fedges;
-        saveConfig();  // save config again if flowVolume is uploaded
+        saveConfig();  // save config again after flowVolume is uploaded
         if (fedges == 0) light_sleep();
     }
     delay(1000);
@@ -116,7 +117,7 @@ void saveConfig() {
         Serial.println("UNABLE to open LittleFS");
         return;
     }
-    uint32 uid = String(user_id.getValue()).toInt();  // assume checked
+    uint32 uid = strtoull(user_id.getValue(), NULL, 10);  // assume checked
     if (uid <= 0 || uid > UINT32_MAX)
         Serial.printf("uid out of bounds (%u)\n", uid);
 
@@ -185,8 +186,10 @@ void beginWiFi() {
     wc.addParameter(&chip_id_display);
 
     // wc.startConfigurationPortal(AP_RESET);  // for testing the wifi/config portal
-
-    autoConnectWiFi();
+    WiFi.begin();
+    if (WiFi.status() != WL_CONNECTED) {
+        wc.startConfigurationPortal(AP_WAIT);
+    }
 }
 
 void reset() {

@@ -1,6 +1,6 @@
 const express = require('express')
 const cors = require('cors')
-const Redis = require("ioredis")
+const Redis = require('ioredis')
 const redis = new Redis({ keyPrefix: 'hydro-rpg:' })
 const app = express()
 const port = 3000
